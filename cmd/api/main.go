@@ -59,12 +59,12 @@ func main() {
 	log.Println("Connected to Redis")
 
 	publisher := events.NewRedisPublisher(redisClient)
-	consumer := events.NewConsumer(redisClient)
-
-	go consumer.Subscribe(context.Background(), service.OrderCreatedChannel)
 
 	orderRepo := repo.NewPostgresOrderRepository(db)
 	orderService := service.NewOrderService(orderRepo, publisher)
+
+	consumer := events.NewConsumer(redisClient, orderService)
+	go consumer.Subscribe(context.Background(), service.OrderCreatedChannel)
 	h := handler.NewHandler(orderService)
 
 	r := gin.Default()
