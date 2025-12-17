@@ -8,7 +8,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
+	handler "github.com/orders-service/internal/http"
 	"github.com/orders-service/internal/repo"
+	"github.com/orders-service/internal/service"
 )
 
 func main() {
@@ -38,13 +40,17 @@ func main() {
 	}
 	log.Println("Migrations applied")
 
-	_ = repo.NewPostgresOrderRepository(db)
+	orderRepo := repo.NewPostgresOrderRepository(db)
+	orderService := service.NewOrderService(orderRepo)
+	h := handler.NewHandler(orderService)
 
 	r := gin.Default()
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	h.RegisterRoutes(r)
 
 	log.Printf("Starting server on port %s", port)
 	if err := r.Run(":" + port); err != nil {
