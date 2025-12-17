@@ -22,6 +22,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/orders", h.CreateOrder)
 	r.GET("/orders/:id", h.GetOrder)
 	r.GET("/orders", h.GetOrders)
+	r.PUT("/orders/:id", h.UpdateOrder)
+	r.DELETE("/orders/:id", h.DeleteOrder)
 }
 
 func (h *Handler) CreateOrder(c *gin.Context) {
@@ -68,4 +70,42 @@ func (h *Handler) GetOrders(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, orders)
+}
+
+func (h *Handler) UpdateOrder(c *gin.Context) {
+	id := c.Param("id")
+
+	var req service.UpdateOrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	order, err := h.orderService.UpdateOrder(c.Request.Context(), id, req)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, order)
+}
+
+func (h *Handler) DeleteOrder(c *gin.Context) {
+	id := c.Param("id")
+
+	err := h.orderService.DeleteOrder(c.Request.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusNoContent, nil)
 }

@@ -51,3 +51,35 @@ func (r *PostgresOrderRepository) GetAll(ctx context.Context) ([]model.Order, er
 	}
 	return orders, rows.Err()
 }
+
+func (r *PostgresOrderRepository) Update(ctx context.Context, order *model.Order) error {
+	query := `UPDATE orders SET product = $1, quantity = $2, status = $3 WHERE id = $4`
+	result, err := r.db.ExecContext(ctx, query, order.Product, order.Quantity, order.Status, order.ID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (r *PostgresOrderRepository) Delete(ctx context.Context, id string) error {
+	query := `DELETE FROM orders WHERE id = $1`
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
