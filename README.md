@@ -1,13 +1,13 @@
 # Orders Service
 
-Event-driven REST backend service built with Go, Gin, PostgreSQL, and Redis.
+Event-driven REST backend service built with Go, Gin, PostgreSQL, and Redis Streams.
 
 ## Stack
 
 - Go 1.25
 - Gin (HTTP framework)
 - PostgreSQL (persistence)
-- Redis (Pub/Sub events)
+- Redis Streams (guaranteed event delivery)
 - Docker + docker-compose
 
 ## Architecture
@@ -18,7 +18,7 @@ internal/
   http/               # HTTP handlers
   service/            # Business logic
   repo/               # Data access layer
-  events/             # Redis pub/sub
+  events/             # Redis Streams publisher/consumer
   model/              # Domain models
 migrations/           # SQL migrations
 ```
@@ -52,6 +52,18 @@ curl -X POST http://localhost:8080/orders \
 curl http://localhost:8080/orders/{id}
 ```
 
+### Update Order
+```bash
+curl -X PUT http://localhost:8080/orders/{id} \
+  -H "Content-Type: application/json" \
+  -d "{\"product\":\"Laptop Pro\",\"quantity\":3,\"status\":\"shipped\"}"
+```
+
+### Delete Order
+```bash
+curl -X DELETE http://localhost:8080/orders/{id}
+```
+
 ### List All Orders
 ```bash
 curl http://localhost:8080/orders
@@ -64,7 +76,15 @@ curl http://localhost:8080/health
 
 ## Events
 
-When an order is created, an `order.created` event is published to Redis Pub/Sub. The built-in consumer logs events to stdout.
+Events are published to Redis Streams for guaranteed delivery:
+
+| Event | Description |
+|-------|-------------|
+| `order.created` | Published when a new order is created |
+| `order.updated` | Published when an order is updated |
+| `order.deleted` | Published when an order is deleted |
+
+The built-in consumer automatically updates order status to `confirmed` after receiving `order.created` (with 2-second processing delay).
 
 ## Running Tests
 
