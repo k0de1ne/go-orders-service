@@ -6,6 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
@@ -63,8 +66,11 @@ func main() {
 	orderRepo := repo.NewPostgresOrderRepository(db)
 	orderService := service.NewOrderService(orderRepo, publisher)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	consumer := events.NewConsumer(redisClient, orderService)
-	go consumer.Subscribe(context.Background(), service.OrderCreatedChannel)
+	go consumer.Subscribe(ctx, service.OrderCreatedChannel)
 	h := handler.NewHandler(orderService)
 
 	r := gin.Default()
@@ -75,8 +81,35 @@ func main() {
 
 	h.RegisterRoutes(r)
 
-	log.Printf("Starting server on port %s", port)
-	if err := r.Run(":" + port); err != nil {
-		log.Fatal(err)
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
 	}
+
+	go func() {
+		log.Printf("Starting server on port %s", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %s\n", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	cancel()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+
+	if err := redisClient.Close(); err != nil {
+		log.Printf("Error closing Redis connection: %v", err)
+	}
+
+	log.Println("Server exiting")
 }
