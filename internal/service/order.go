@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,7 +41,9 @@ func (s *OrderService) CreateOrder(ctx context.Context, req CreateOrderRequest) 
 	}
 
 	if s.publisher != nil {
-		_ = s.publisher.Publish(ctx, OrderCreatedChannel, order)
+		if err := s.publisher.Publish(ctx, OrderCreatedChannel, order); err != nil {
+			log.Printf("failed to publish order.created event: %v", err)
+		}
 	}
 
 	return order, nil
