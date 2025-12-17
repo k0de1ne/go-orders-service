@@ -5,16 +5,20 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/orders-service/internal/events"
 	"github.com/orders-service/internal/model"
 	"github.com/orders-service/internal/repo"
 )
 
+const OrderCreatedChannel = "order.created"
+
 type OrderService struct {
-	repo repo.OrderRepository
+	repo      repo.OrderRepository
+	publisher events.Publisher
 }
 
-func NewOrderService(repo repo.OrderRepository) *OrderService {
-	return &OrderService{repo: repo}
+func NewOrderService(repo repo.OrderRepository, publisher events.Publisher) *OrderService {
+	return &OrderService{repo: repo, publisher: publisher}
 }
 
 type CreateOrderRequest struct {
@@ -34,6 +38,11 @@ func (s *OrderService) CreateOrder(ctx context.Context, req CreateOrderRequest) 
 	if err := s.repo.Create(ctx, order); err != nil {
 		return nil, err
 	}
+
+	if s.publisher != nil {
+		_ = s.publisher.Publish(ctx, OrderCreatedChannel, order)
+	}
+
 	return order, nil
 }
 
