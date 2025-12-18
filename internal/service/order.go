@@ -2,13 +2,14 @@ package service
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/orders-service/internal/events"
+	"github.com/orders-service/internal/logger"
 	"github.com/orders-service/internal/model"
 	"github.com/orders-service/internal/repo"
+	"go.uber.org/zap"
 )
 
 const (
@@ -38,6 +39,8 @@ type UpdateOrderRequest struct {
 }
 
 func (s *OrderService) CreateOrder(ctx context.Context, req CreateOrderRequest) (*model.Order, error) {
+	log := logger.FromContext(ctx)
+
 	order := &model.Order{
 		ID:        uuid.New().String(),
 		Product:   req.Product,
@@ -47,12 +50,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, req CreateOrderRequest) 
 	}
 
 	if err := s.repo.Create(ctx, order); err != nil {
+		log.Error("postgres: failed to create order", zap.Error(err))
 		return nil, err
 	}
 
 	if s.publisher != nil {
 		if err := s.publisher.Publish(ctx, OrderCreatedChannel, order); err != nil {
-			log.Printf("failed to publish order.created event: %v", err)
+			log.Error("failed to publish order.created event", zap.Error(err))
+		} else {
+			log.Info("event published", zap.String("channel", OrderCreatedChannel), zap.String("order_id", order.ID))
 		}
 	}
 
@@ -68,8 +74,11 @@ func (s *OrderService) GetOrders(ctx context.Context) ([]model.Order, error) {
 }
 
 func (s *OrderService) UpdateOrder(ctx context.Context, id string, req UpdateOrderRequest) (*model.Order, error) {
+	log := logger.FromContext(ctx)
+
 	order, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		log.Error("postgres: failed to get order", zap.String("order_id", id), zap.Error(err))
 		return nil, err
 	}
 
@@ -78,12 +87,15 @@ func (s *OrderService) UpdateOrder(ctx context.Context, id string, req UpdateOrd
 	order.Status = req.Status
 
 	if err := s.repo.Update(ctx, order); err != nil {
+		log.Error("postgres: failed to update order", zap.String("order_id", id), zap.Error(err))
 		return nil, err
 	}
 
 	if s.publisher != nil {
 		if err := s.publisher.Publish(ctx, OrderUpdatedChannel, order); err != nil {
-			log.Printf("failed to publish order.updated event: %v", err)
+			log.Error("failed to publish order.updated event", zap.Error(err))
+		} else {
+			log.Info("event published", zap.String("channel", OrderUpdatedChannel), zap.String("order_id", order.ID))
 		}
 	}
 
@@ -91,18 +103,24 @@ func (s *OrderService) UpdateOrder(ctx context.Context, id string, req UpdateOrd
 }
 
 func (s *OrderService) DeleteOrder(ctx context.Context, id string) error {
+	log := logger.FromContext(ctx)
+
 	order, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		log.Error("postgres: failed to get order", zap.String("order_id", id), zap.Error(err))
 		return err
 	}
 
 	if err := s.repo.Delete(ctx, id); err != nil {
+		log.Error("postgres: failed to delete order", zap.String("order_id", id), zap.Error(err))
 		return err
 	}
 
 	if s.publisher != nil {
 		if err := s.publisher.Publish(ctx, OrderDeletedChannel, order); err != nil {
-			log.Printf("failed to publish order.deleted event: %v", err)
+			log.Error("failed to publish order.deleted event", zap.Error(err))
+		} else {
+			log.Info("event published", zap.String("channel", OrderDeletedChannel), zap.String("order_id", order.ID))
 		}
 	}
 
@@ -110,11 +128,20 @@ func (s *OrderService) DeleteOrder(ctx context.Context, id string) error {
 }
 
 func (s *OrderService) UpdateOrderStatus(ctx context.Context, id string, status string) error {
+	log := logger.FromContext(ctx)
+
 	order, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		log.Error("postgres: failed to get order", zap.String("order_id", id), zap.Error(err))
 		return err
 	}
 
 	order.Status = status
-	return s.repo.Update(ctx, order)
+	if err := s.repo.Update(ctx, order); err != nil {
+		log.Error("postgres: failed to update order status", zap.String("order_id", id), zap.Error(err))
+		return err
+	}
+
+	log.Info("order status updated", zap.String("order_id", id), zap.String("status", status))
+	return nil
 }

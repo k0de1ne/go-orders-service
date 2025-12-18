@@ -3,11 +3,12 @@ package events
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"time"
 
+	"github.com/orders-service/internal/logger"
 	"github.com/orders-service/internal/model"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 const (
@@ -22,24 +23,25 @@ type OrderStatusUpdater interface {
 type Consumer struct {
 	client  *redis.Client
 	updater OrderStatusUpdater
+	log     *zap.Logger
 }
 
-func NewConsumer(client *redis.Client, updater OrderStatusUpdater) *Consumer {
-	return &Consumer{client: client, updater: updater}
+func NewConsumer(client *redis.Client, updater OrderStatusUpdater, log *zap.Logger) *Consumer {
+	return &Consumer{client: client, updater: updater, log: log}
 }
 
 func (c *Consumer) Subscribe(ctx context.Context, channel string) {
 	err := c.client.XGroupCreateMkStream(ctx, StreamName, ConsumerGroup, "0").Err()
 	if err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
-		log.Printf("failed to create consumer group: %v", err)
+		c.log.Error("redis: failed to create consumer group", zap.Error(err))
 	}
 
-	log.Printf("Subscribed to stream: %s (group: %s)", StreamName, ConsumerGroup)
+	c.log.Info("subscribed to stream", zap.String("stream", StreamName), zap.String("group", ConsumerGroup))
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Consumer shutting down")
+			c.log.Info("consumer shutting down")
 			return
 		default:
 		}
@@ -59,7 +61,7 @@ func (c *Consumer) Subscribe(ctx context.Context, channel string) {
 			if ctx.Err() != nil {
 				return
 			}
-			log.Printf("failed to read from stream: %v", err)
+			c.log.Error("redis: failed to read from stream", zap.Error(err))
 			time.Sleep(time.Second)
 			continue
 		}
@@ -75,22 +77,24 @@ func (c *Consumer) Subscribe(ctx context.Context, channel string) {
 func (c *Consumer) processMessage(ctx context.Context, message redis.XMessage) {
 	event, ok := message.Values["event"].(string)
 	if !ok {
-		log.Printf("invalid event type in message %s", message.ID)
+		c.log.Warn("invalid event type in message", zap.String("message_id", message.ID))
 		c.ackMessage(ctx, message.ID)
 		return
 	}
 
 	payload, ok := message.Values["payload"].(string)
 	if !ok {
-		log.Printf("invalid payload in message %s", message.ID)
+		c.log.Warn("invalid payload in message", zap.String("message_id", message.ID))
 		c.ackMessage(ctx, message.ID)
 		return
 	}
 
-	log.Printf("[%s] %s", event, payload)
+	c.log.Info("event received", zap.String("event", event), zap.String("message_id", message.ID))
+
+	msgCtx := logger.WithContext(ctx, c.log.With(zap.String("event", event), zap.String("message_id", message.ID)))
 
 	if event == "order.created" {
-		c.handleOrderCreated(ctx, payload)
+		c.handleOrderCreated(msgCtx, payload)
 	}
 
 	c.ackMessage(ctx, message.ID)
@@ -98,14 +102,16 @@ func (c *Consumer) processMessage(ctx context.Context, message redis.XMessage) {
 
 func (c *Consumer) ackMessage(ctx context.Context, messageID string) {
 	if err := c.client.XAck(ctx, StreamName, ConsumerGroup, messageID).Err(); err != nil {
-		log.Printf("failed to ack message %s: %v", messageID, err)
+		c.log.Error("redis: failed to ack message", zap.String("message_id", messageID), zap.Error(err))
 	}
 }
 
 func (c *Consumer) handleOrderCreated(ctx context.Context, payload string) {
+	log := logger.FromContext(ctx)
+
 	var order model.Order
 	if err := json.Unmarshal([]byte(payload), &order); err != nil {
-		log.Printf("failed to unmarshal order: %v", err)
+		log.Error("failed to unmarshal order", zap.Error(err))
 		return
 	}
 
@@ -113,9 +119,9 @@ func (c *Consumer) handleOrderCreated(ctx context.Context, payload string) {
 
 	if c.updater != nil {
 		if err := c.updater.UpdateOrderStatus(ctx, order.ID, "confirmed"); err != nil {
-			log.Printf("failed to update order status: %v", err)
+			log.Error("failed to update order status", zap.String("order_id", order.ID), zap.Error(err))
 			return
 		}
-		log.Printf("order %s status updated to confirmed", order.ID)
+		log.Info("order confirmed", zap.String("order_id", order.ID))
 	}
 }

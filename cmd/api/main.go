@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,12 +13,20 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/orders-service/internal/events"
 	handler "github.com/orders-service/internal/http"
+	"github.com/orders-service/internal/logger"
 	"github.com/orders-service/internal/repo"
 	"github.com/orders-service/internal/service"
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 func main() {
+	log, err := logger.New()
+	if err != nil {
+		panic(err)
+	}
+	defer log.Sync()
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -37,29 +44,29 @@ func main() {
 
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("failed to open database", zap.Error(err))
 	}
 	defer db.Close()
 
 	if err := db.Ping(); err != nil {
-		log.Fatal(err)
+		log.Fatal("failed to ping database", zap.Error(err))
 	}
-	log.Println("Connected to database")
+	log.Info("connected to database")
 
 	if err := repo.RunMigrations(db, "migrations"); err != nil {
-		log.Fatal(err)
+		log.Fatal("failed to run migrations", zap.Error(err))
 	}
-	log.Println("Migrations applied")
+	log.Info("migrations applied")
 
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("failed to parse redis URL", zap.Error(err))
 	}
 	redisClient := redis.NewClient(opt)
 	if err := redisClient.Ping(context.Background()).Err(); err != nil {
-		log.Fatal(err)
+		log.Fatal("failed to ping redis", zap.Error(err))
 	}
-	log.Println("Connected to Redis")
+	log.Info("connected to redis")
 
 	publisher := events.NewRedisPublisher(redisClient)
 
@@ -69,11 +76,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	consumer := events.NewConsumer(redisClient, orderService)
+	consumer := events.NewConsumer(redisClient, orderService, log)
 	go consumer.Subscribe(ctx, service.OrderCreatedChannel)
 	h := handler.NewHandler(orderService)
 
-	r := gin.Default()
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(logger.Middleware(log))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -87,16 +97,16 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("Starting server on port %s", port)
+		log.Info("starting server", zap.String("port", port))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %s\n", err)
+			log.Fatal("server error", zap.Error(err))
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Println("Shutting down server...")
+	log.Info("shutting down server")
 
 	cancel()
 
@@ -104,12 +114,12 @@ func main() {
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatal("Server forced to shutdown:", err)
+		log.Fatal("server forced to shutdown", zap.Error(err))
 	}
 
 	if err := redisClient.Close(); err != nil {
-		log.Printf("Error closing Redis connection: %v", err)
+		log.Error("error closing redis connection", zap.Error(err))
 	}
 
-	log.Println("Server exiting")
+	log.Info("server exited")
 }

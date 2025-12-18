@@ -6,8 +6,10 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/orders-service/internal/logger"
 	"github.com/orders-service/internal/model"
 	"github.com/orders-service/internal/service"
+	"go.uber.org/zap"
 )
 
 type Handler struct {
@@ -27,30 +29,38 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 }
 
 func (h *Handler) CreateOrder(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context())
+
 	var req service.CreateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Warn("invalid request body", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	order, err := h.orderService.CreateOrder(c.Request.Context(), req)
 	if err != nil {
+		log.Error("failed to create order", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	log.Info("order created", zap.String("order_id", order.ID))
 	c.JSON(http.StatusCreated, order)
 }
 
 func (h *Handler) GetOrder(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context())
 	id := c.Param("id")
 
 	order, err := h.orderService.GetOrder(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			log.Warn("order not found", zap.String("order_id", id))
 			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
 			return
 		}
+		log.Error("failed to get order", zap.String("order_id", id), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -59,8 +69,11 @@ func (h *Handler) GetOrder(c *gin.Context) {
 }
 
 func (h *Handler) GetOrders(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context())
+
 	orders, err := h.orderService.GetOrders(c.Request.Context())
 	if err != nil {
+		log.Error("failed to get orders", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -73,10 +86,12 @@ func (h *Handler) GetOrders(c *gin.Context) {
 }
 
 func (h *Handler) UpdateOrder(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context())
 	id := c.Param("id")
 
 	var req service.UpdateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Warn("invalid request body", zap.Error(err))
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -84,28 +99,35 @@ func (h *Handler) UpdateOrder(c *gin.Context) {
 	order, err := h.orderService.UpdateOrder(c.Request.Context(), id, req)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			log.Warn("order not found", zap.String("order_id", id))
 			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
 			return
 		}
+		log.Error("failed to update order", zap.String("order_id", id), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	log.Info("order updated", zap.String("order_id", order.ID))
 	c.JSON(http.StatusOK, order)
 }
 
 func (h *Handler) DeleteOrder(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context())
 	id := c.Param("id")
 
 	err := h.orderService.DeleteOrder(c.Request.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			log.Warn("order not found", zap.String("order_id", id))
 			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
 			return
 		}
+		log.Error("failed to delete order", zap.String("order_id", id), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	log.Info("order deleted", zap.String("order_id", id))
 	c.JSON(http.StatusNoContent, nil)
 }
