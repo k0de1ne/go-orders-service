@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,12 +13,15 @@ import (
 	"github.com/gin-gonic/gin"
 	_ "github.com/lib/pq"
 	"github.com/orders-service/internal/events"
+	grpcserver "github.com/orders-service/internal/grpc"
 	handler "github.com/orders-service/internal/http"
 	"github.com/orders-service/internal/logger"
 	"github.com/orders-service/internal/repo"
 	"github.com/orders-service/internal/service"
+	pb "github.com/orders-service/proto"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -30,6 +34,11 @@ func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
+	}
+
+	grpcPort := os.Getenv("GRPC_PORT")
+	if grpcPort == "" {
+		grpcPort = "9090"
 	}
 
 	dbURL := os.Getenv("DATABASE_URL")
@@ -97,29 +106,47 @@ func main() {
 	}
 
 	go func() {
-		log.Info("starting server", zap.String("port", port))
+		log.Info("starting HTTP server", zap.String("port", port))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("server error", zap.Error(err))
+			log.Fatal("HTTP server error", zap.Error(err))
+		}
+	}()
+
+	grpcSrv := grpc.NewServer()
+	pb.RegisterOrderServiceServer(grpcSrv, grpcserver.NewServer(orderService, log))
+
+	grpcLis, err := net.Listen("tcp", ":"+grpcPort)
+	if err != nil {
+		log.Fatal("failed to listen for gRPC", zap.Error(err))
+	}
+
+	go func() {
+		log.Info("starting gRPC server", zap.String("port", grpcPort))
+		if err := grpcSrv.Serve(grpcLis); err != nil {
+			log.Fatal("gRPC server error", zap.Error(err))
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	log.Info("shutting down server")
+	log.Info("shutting down servers")
 
 	cancel()
+
+	grpcSrv.GracefulStop()
+	log.Info("gRPC server stopped")
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatal("server forced to shutdown", zap.Error(err))
+		log.Fatal("HTTP server forced to shutdown", zap.Error(err))
 	}
 
 	if err := redisClient.Close(); err != nil {
 		log.Error("error closing redis connection", zap.Error(err))
 	}
 
-	log.Info("server exited")
+	log.Info("servers exited")
 }

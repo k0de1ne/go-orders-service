@@ -19,5 +19,6 @@ COPY --from=builder /api .
 COPY migrations ./migrations
 
 EXPOSE 8080
+EXPOSE 9090
 
 CMD ["./api"]
