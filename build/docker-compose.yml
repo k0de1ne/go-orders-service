@@ -1,6 +1,6 @@
 services:
   api:
-    build: .
+    image: ${API_IMAGE:-ghcr.io/k0de1ne/go-orders-service:latest}
     ports:
       - "8080:8080"
       - "9090:9090"

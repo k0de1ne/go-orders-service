@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOLANGCI_LINT_VERSION: v2.7.2
+  GOVULNCHECK_VERSION: v1.1.4
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/go-orders-service
+  COMPOSE_PROJECT_NAME: orders-ci-${{ github.run_id }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: [self-hosted, linux, docker]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          skip-cache: true
+
+      - run: |
+          go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+          govulncheck ./...
+
+  test:
+    name: Test
+    runs-on: [self-hosted, linux, docker]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7
+
+  docker-build:
+    name: Docker Build
+    runs-on: [self-hosted, linux, docker]
+    environment: packages
+    timeout-minutes: 15
+    needs: [lint, test]
+    outputs:
+      image-tag: ${{ steps.set-tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set image tag
+        id: set-tag
+        run: |
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          BRANCH_SAFE=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          echo "tag=sha-${SHA_SHORT}" >> $GITHUB_OUTPUT
+          echo "branch_tag=${BRANCH_SAFE}" >> $GITHUB_OUTPUT
+
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: build/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          load: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.set-tag.outputs.tag }}
+            ${{ env.IMAGE_NAME }}:${{ steps.set-tag.outputs.branch_tag }}
+            ${{ github.ref == 'refs/heads/main' && format('{0}:latest', env.IMAGE_NAME) || '' }}
+
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ steps.set-tag.outputs.tag }}
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          format: table
+
+  integration-test:
+    name: Integration Test
+    runs-on: [self-hosted, linux, docker]
+    environment: packages
+    timeout-minutes: 15
+    needs: docker-build
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Pull API image
+        run: docker pull ${{ env.IMAGE_NAME }}:${{ needs.docker-build.outputs.image-tag }}
+
+      - name: Start services
+        env:
+          API_IMAGE: ${{ env.IMAGE_NAME }}:${{ needs.docker-build.outputs.image-tag }}
+        run: |
+          docker compose -p ${{ env.COMPOSE_PROJECT_NAME }} -f build/docker-compose.yml up -d
+          docker network connect ${{ env.COMPOSE_PROJECT_NAME }}_orders-network $(hostname)
+
+      - name: Verify health endpoint
+        run: |
+          response=$(curl -sf http://api:8080/health)
+          echo "Health check response: $response"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker network disconnect ${{ env.COMPOSE_PROJECT_NAME }}_orders-network $(hostname) || true
+          docker compose -p ${{ env.COMPOSE_PROJECT_NAME }} -f build/docker-compose.yml down -v --remove-orphans || true
