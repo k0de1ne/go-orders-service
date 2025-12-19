@@ -1,142 +1,239 @@
 # Orders Service
 
-Event-driven backend service with REST and gRPC APIs, built with Go, Gin, PostgreSQL, and Redis Streams.
+Order management microservice with REST and gRPC APIs.
+Demo project for **Junior+/Middle Go Developer** position in fintech/banking.
 
-## Stack
+---
 
-- Go 1.25
-- Gin (HTTP framework)
-- gRPC (binary protocol)
-- PostgreSQL (persistence)
-- Redis Streams (guaranteed event delivery)
-- Docker + docker-compose
+## Tech Stack
+
+| Category | Technology |
+|----------|------------|
+| Language | Go 1.25 |
+| HTTP | Gin |
+| RPC | gRPC + Protocol Buffers |
+| Database | PostgreSQL 18 |
+| Messaging | Redis Streams |
+| Containers | Docker, Docker Compose |
+| CI/CD | GitHub Actions (self-hosted runner) |
+| Logging | Zap (structured JSON) |
+| Linter | golangci-lint |
+
+---
 
 ## Architecture
 
 ```
-cmd/api/main.go       # Application entry point
-internal/
-  http/               # HTTP handlers
-  grpc/               # gRPC handlers
-  service/            # Business logic
-  repo/               # Data access layer
-  events/             # Redis Streams publisher/consumer
-  model/              # Domain models
-proto/                # Protocol Buffers definitions
-migrations/           # SQL migrations
+┌──────────────────────────────────────────────────────┐
+│                     Clients                          │
+└─────────────┬────────────────────────┬───────────────┘
+              │                        │
+       ┌──────▼──────┐          ┌──────▼──────┐
+       │  REST API   │          │  gRPC API   │
+       │  :8080      │          │  :9090      │
+       └──────┬──────┘          └──────┬──────┘
+              │                        │
+              └───────────┬────────────┘
+                          │
+                ┌─────────▼─────────┐
+                │   Service Layer   │
+                │  (business logic) │
+                └─────────┬─────────┘
+                          │
+         ┌────────────────┼────────────────┐
+         │                │                │
+  ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐
+  │ Repository  │  │  Publisher  │  │  Consumer   │
+  │ (PostgreSQL)│  │   (Redis)   │  │   (Redis)   │
+  └─────────────┘  └─────────────┘  └─────────────┘
 ```
 
-## Running on Windows
+**Key decisions:**
 
-Prerequisites: Docker Desktop
+- **Layered architecture**: transport → service → repository
+- **Shared service layer** for REST and gRPC — no business logic duplication
+- **Event-driven** via Redis Streams with consumer groups
+- **Graceful shutdown** for HTTP, gRPC, and Redis consumer
+- **Structured logging** with request_id for request tracing
+
+---
+
+## Project Structure
+
+```
+cmd/api/           # Entry point, dependency initialization
+internal/
+  http/            # REST handlers (Gin)
+  grpc/            # gRPC server
+  service/         # Business logic
+  repo/            # Repository (PostgreSQL)
+  events/          # Publisher/Consumer (Redis Streams)
+  logger/          # Zap logger + middleware
+  model/           # Domain models
+proto/             # .proto files and generated code
+migrations/        # SQL migrations
+build/             # Dockerfile, docker-compose
+```
+
+---
+
+## API
+
+### REST Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/orders` | Create order |
+| `GET` | `/orders/:id` | Get order |
+| `GET` | `/orders` | List orders |
+| `PUT` | `/orders/:id` | Update order |
+| `DELETE` | `/orders/:id` | Delete order |
+| `GET` | `/health` | Health check |
+
+### gRPC Service
+
+```protobuf
+service OrderService {
+  rpc CreateOrder(CreateOrderRequest) returns (CreateOrderResponse);
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+  rpc ListOrders(ListOrdersRequest) returns (ListOrdersResponse);
+  rpc UpdateOrder(UpdateOrderRequest) returns (UpdateOrderResponse);
+  rpc DeleteOrder(DeleteOrderRequest) returns (DeleteOrderResponse);
+}
+```
+
+**Idempotency**: pass `x-idempotency-key` in gRPC metadata for idempotent order creation.
+
+### Events (Redis Streams)
+
+| Event | Trigger |
+|-------|---------|
+| `order.created` | After order creation |
+| `order.updated` | After order update |
+| `order.deleted` | After order deletion |
+
+Consumer automatically processes `order.created` and updates order status to `confirmed`.
+
+---
+
+## Running Locally
+
+### Requirements
+
+- Docker Desktop
+
+### Pull Image
 
 ```bash
-# Start all services
+docker pull ghcr.io/k0de1ne/go-orders-service:main
+```
+
+### Start
+
+```bash
+cd build
 docker compose up -d
+```
 
-# View logs
-docker compose logs -f api
+### Verify
 
-# Stop services
+```bash
+# Health check
+curl http://localhost:8080/health
+
+# Create order
+curl -X POST http://localhost:8080/orders \
+  -H "Content-Type: application/json" \
+  -d '{"product":"Laptop","quantity":2}'
+
+# List orders
+curl http://localhost:8080/orders
+
+# gRPC (requires grpcurl)
+grpcurl -plaintext localhost:9090 orders.OrderService/ListOrders
+```
+
+### Stop
+
+```bash
 docker compose down
 ```
 
-## API Endpoints
+---
 
-### Create Order
-```bash
-curl -X POST http://localhost:8080/orders \
-  -H "Content-Type: application/json" \
-  -d "{\"product\":\"Laptop\",\"quantity\":2}"
-```
+## CI/CD
 
-### Get Order by ID
-```bash
-curl http://localhost:8080/orders/{id}
-```
+Pipeline runs on **self-hosted runner** on push/PR to `main`.
 
-### Update Order
-```bash
-curl -X PUT http://localhost:8080/orders/{id} \
-  -H "Content-Type: application/json" \
-  -d "{\"product\":\"Laptop Pro\",\"quantity\":3,\"status\":\"shipped\"}"
-```
+### Stages
 
-### Delete Order
-```bash
-curl -X DELETE http://localhost:8080/orders/{id}
-```
-
-### List All Orders
-```bash
-curl http://localhost:8080/orders
-```
-
-### Health Check
-```bash
-curl http://localhost:8080/health
-```
-
-## gRPC API
-
-The service exposes a gRPC API on port `9090` with the following methods:
-
-| Method | Description |
-|--------|-------------|
-| `CreateOrder` | Create a new order |
-| `GetOrder` | Get order by ID |
-| `ListOrders` | List all orders |
-| `UpdateOrder` | Update an existing order |
-| `DeleteOrder` | Delete an order |
-
-### Idempotency
-
-Pass `x-idempotency-key` in gRPC metadata to ensure idempotent order creation.
-
-### Example with grpcurl
-
-```bash
-# List orders
-grpcurl -plaintext localhost:9090 orders.OrderService/ListOrders
-
-# Create order
-grpcurl -plaintext -d '{"product":"Laptop","quantity":2}' \
-  localhost:9090 orders.OrderService/CreateOrder
-
-# Get order
-grpcurl -plaintext -d '{"id":"<order-id>"}' \
-  localhost:9090 orders.OrderService/GetOrder
-```
-
-## Events
-
-Events are published to Redis Streams for guaranteed delivery:
-
-| Event | Description |
+| Stage | Description |
 |-------|-------------|
-| `order.created` | Published when a new order is created |
-| `order.updated` | Published when an order is updated |
-| `order.deleted` | Published when an order is deleted |
+| **Lint** | golangci-lint + govulncheck |
+| **Test** | `go test -race` with coverage |
+| **Docker Build** | Multi-stage build, push to GHCR |
+| **Security Scan** | Trivy (CRITICAL, HIGH) |
+| **Integration Test** | docker-compose + health check |
 
-The built-in consumer automatically updates order status to `confirmed` after receiving `order.created` (with 2-second processing delay).
+### Docker Image
 
-## Running Tests
-
-```bash
-docker compose run --rm api go test ./...
+```
+ghcr.io/k0de1ne/go-orders-service:latest
+ghcr.io/k0de1ne/go-orders-service:sha-<commit>
 ```
 
-## Generating Proto Files
+---
 
-```bash
-make proto
-```
+## Production Patterns
+
+**Implemented:**
+
+- Graceful shutdown (HTTP, gRPC, Redis consumer)
+- Structured logging (JSON) with request_id
+- Health check endpoint
+- Multi-stage Docker build (scratch image)
+- Dependency health checks in docker-compose
+- Consumer groups for Redis Streams
+- Separation of transport/service/repository layers
+- Unit tests with mock repository
+
+**Intentional simplifications:**
+
+- Migrations run at application startup
+- Consumer group with single consumer
+- No retry/DLQ for events
+- Idempotency key is logged but not validated in DB
+
+**Potential improvements:**
+
+- Distributed tracing (OpenTelemetry)
+- Metrics (Prometheus)
+- Idempotency via key storage in Redis/PostgreSQL
+- Outbox pattern for guaranteed event delivery
+- Kubernetes manifests
+
+---
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| PORT | 8080 | HTTP server port |
-| GRPC_PORT | 9090 | gRPC server port |
-| DATABASE_URL | - | PostgreSQL connection string |
-| REDIS_URL | - | Redis connection string |
+| `PORT` | 8080 | HTTP server port |
+| `GRPC_PORT` | 9090 | gRPC server port |
+| `DATABASE_URL` | — | PostgreSQL connection string |
+| `REDIS_URL` | — | Redis connection string |
+
+---
+
+## Development
+
+```bash
+# Run tests
+make test
+
+# Generate proto
+make proto
+
+# View logs
+docker compose logs -f api
+```
