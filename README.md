@@ -196,6 +196,11 @@ ghcr.io/k0de1ne/go-orders-service:sha-<commit>
 - Consumer groups for Redis Streams
 - Separation of transport/service/repository layers
 - Unit tests with mock repository
+- Performance profiling via pprof (CPU, heap, goroutines)
+- Database connection pool configuration
+- Database metrics endpoint
+- Comprehensive benchmarking suite
+- Load testing tool with configurable scenarios
 
 **Intentional simplifications:**
 
@@ -220,12 +225,15 @@ ghcr.io/k0de1ne/go-orders-service:sha-<commit>
 |----------|---------|-------------|
 | `PORT` | 8080 | HTTP server port |
 | `GRPC_PORT` | 9090 | gRPC server port |
+| `PPROF_PORT` | 6060 | pprof profiling port |
 | `DATABASE_URL` | — | PostgreSQL connection string |
 | `REDIS_URL` | — | Redis connection string |
 
 ---
 
 ## Development
+
+### Basic Commands
 
 ```bash
 # Run tests
@@ -235,5 +243,59 @@ make test
 make proto
 
 # View logs
-docker compose logs -f api
+make logs
+
+# Restart service
+make restart
+
+# Show all available commands
+make help
 ```
+
+### Performance Testing
+
+**Benchmarks:**
+```bash
+make bench              # Run all benchmarks
+make bench-service      # Service layer only
+make bench-save         # Save baseline
+make bench-compare      # Compare results
+```
+
+**Load Testing:**
+```bash
+make loadtest-create    # Test create operation
+make loadtest-mixed     # Test mixed operations
+make loadtest-duration  # 1-minute stress test
+```
+
+**Profiling:**
+```bash
+make pprof-cpu          # Collect CPU profile
+make pprof-heap         # Collect heap profile
+make pprof-web          # Open interactive web UI
+```
+
+**Monitoring:**
+```bash
+make health             # Health check
+make db-metrics         # Database pool stats
+```
+
+**Custom load test:**
+```bash
+go run scripts/loadtest.go -requests 5000 -concurrency 50 -operation mixed
+go run scripts/loadtest.go -duration 5m -concurrency 20 -operation create
+```
+
+Operations: `create`, `get`, `list`, `update`, `delete`, `mixed`
+
+### Profiling Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `:6060/debug/pprof/` | pprof index |
+| `:6060/debug/pprof/profile?seconds=30` | CPU profile |
+| `:6060/debug/pprof/heap` | Heap profile |
+| `:6060/debug/pprof/goroutine` | Goroutine dump |
+| `:8080/metrics/db` | Database pool metrics |

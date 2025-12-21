@@ -7,3 +7,4 @@ linters:
         - (*database/sql.Rows).Close
         - (*database/sql.DB).Close
         - (*go.uber.org/zap.Logger).Sync
+        - (*net/http.Response).Body.Close

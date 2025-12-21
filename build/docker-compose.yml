@@ -1,28 +1,11 @@
 services:
-  api:
-    image: ${API_IMAGE:-ghcr.io/k0de1ne/go-orders-service:latest}
-    ports:
-      - "8080:8080"
-      - "9090:9090"
-    environment:
-      - PORT=8080
-      - GRPC_PORT=9090
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/orders?sslmode=disable
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    networks:
-      - orders-network
-
   postgres:
     image: postgres:18.1-alpine
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=orders
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-orders}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -35,8 +18,34 @@ services:
 
   redis:
     image: redis:8.4.0-alpine
+    restart: unless-stopped
     networks:
       - orders-network
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/k0de1ne/go-orders-service:latest}
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8080}:8080"
+      - "${GRPC_PORT:-9090}:9090"
+    environment:
+      PORT: 8080
+      GRPC_PORT: 9090
+      DATABASE_URL: ${DATABASE_URL:-postgres://postgres:postgres@postgres:5432/orders?sslmode=disable}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - orders-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 networks:
   orders-network:

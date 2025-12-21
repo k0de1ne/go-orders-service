@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	"net"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -30,6 +32,22 @@ func main() {
 		panic(err)
 	}
 	defer log.Sync()
+
+	pprofPort := os.Getenv("PPROF_PORT")
+	if pprofPort == "" {
+		pprofPort = "6060"
+	}
+	go func() {
+		log.Info("starting pprof server", zap.String("port", pprofPort))
+		if err := http.ListenAndServe(":"+pprofPort, nil); err != nil {
+			log.Error("pprof server error", zap.Error(err))
+		}
+	}()
+
+	log.Info("runtime configuration",
+		zap.Int("GOMAXPROCS", runtime.GOMAXPROCS(0)),
+		zap.Int("NumCPU", runtime.NumCPU()),
+	)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -56,6 +74,18 @@ func main() {
 		log.Fatal("failed to open database", zap.Error(err))
 	}
 	defer db.Close()
+
+	maxOpenConns := 25
+	maxIdleConns := 5
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetMaxIdleConns(maxIdleConns)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(10 * time.Minute)
+
+	log.Info("database pool configured",
+		zap.Int("max_open_conns", maxOpenConns),
+		zap.Int("max_idle_conns", maxIdleConns),
+	)
 
 	if err := db.Ping(); err != nil {
 		log.Fatal("failed to ping database", zap.Error(err))
@@ -96,6 +126,21 @@ func main() {
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	r.GET("/metrics/db", func(c *gin.Context) {
+		stats := db.Stats()
+		c.JSON(http.StatusOK, gin.H{
+			"max_open_connections": stats.MaxOpenConnections,
+			"open_connections":     stats.OpenConnections,
+			"in_use":               stats.InUse,
+			"idle":                 stats.Idle,
+			"wait_count":           stats.WaitCount,
+			"wait_duration":        stats.WaitDuration.String(),
+			"max_idle_closed":      stats.MaxIdleClosed,
+			"max_idle_time_closed": stats.MaxIdleTimeClosed,
+			"max_lifetime_closed":  stats.MaxLifetimeClosed,
+		})
 	})
 
 	h.RegisterRoutes(r)

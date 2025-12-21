@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 type mockRepo struct {
 	orders map[string]*model.Order
+	mu     sync.RWMutex
 }
 
 func newMockRepo() *mockRepo {
@@ -18,11 +20,15 @@ func newMockRepo() *mockRepo {
 }
 
 func (m *mockRepo) Create(ctx context.Context, order *model.Order) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.orders[order.ID] = order
 	return nil
 }
 
 func (m *mockRepo) GetByID(ctx context.Context, id string) (*model.Order, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	order, ok := m.orders[id]
 	if !ok {
 		return nil, sql.ErrNoRows
@@ -31,6 +37,8 @@ func (m *mockRepo) GetByID(ctx context.Context, id string) (*model.Order, error)
 }
 
 func (m *mockRepo) GetAll(ctx context.Context) ([]model.Order, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	var result []model.Order
 	for _, o := range m.orders {
 		result = append(result, *o)
@@ -39,6 +47,8 @@ func (m *mockRepo) GetAll(ctx context.Context) ([]model.Order, error) {
 }
 
 func (m *mockRepo) Update(ctx context.Context, order *model.Order) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, ok := m.orders[order.ID]; !ok {
 		return sql.ErrNoRows
 	}
@@ -47,6 +57,8 @@ func (m *mockRepo) Update(ctx context.Context, order *model.Order) error {
 }
 
 func (m *mockRepo) Delete(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, ok := m.orders[id]; !ok {
 		return sql.ErrNoRows
 	}
@@ -56,9 +68,12 @@ func (m *mockRepo) Delete(ctx context.Context, id string) error {
 
 type mockPublisher struct {
 	published []interface{}
+	mu        sync.Mutex
 }
 
 func (m *mockPublisher) Publish(ctx context.Context, channel string, message interface{}) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.published = append(m.published, message)
 	return nil
 }
