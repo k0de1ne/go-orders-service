@@ -1,96 +1,104 @@
 # Orders Service
 
-Order management microservice with REST and gRPC APIs.
-Demo project for **Junior+/Middle Go Developer** position in fintech/banking.
+This project is an order management microservice featuring REST and gRPC APIs.
 
 ---
 
 ## Tech Stack
 
-| Category | Technology |
-|----------|------------|
-| Language | Go 1.25 |
-| HTTP | Gin |
-| RPC | gRPC + Protocol Buffers |
-| Database | PostgreSQL 18 |
-| Messaging | Redis Streams |
-| Containers | Docker, Docker Compose |
-| CI/CD | GitHub Actions (self-hosted runner) |
-| Logging | Zap (structured JSON) |
-| Linter | golangci-lint |
+The service is built with the following technologies:
+
+| Category | Technology | Version |
+|----------|------------|---------|
+| Language | Go | `1.25` |
+| HTTP Framework | Gin | `v1.11.0` |
+| RPC Framework | gRPC | `v1.77.0` |
+| Database | PostgreSQL | `18.1-alpine` |
+| Messaging | Redis | `8.4.0-alpine` |
+| Containers | Docker, Docker Compose | - |
+| CI/CD | GitHub Actions | - |
+| Logging | Zap | `v1.27.1` |
+| Linter | golangci-lint | `v2.7.2` |
 
 ---
 
 ## Architecture
 
+The application follows a standard layered architecture:
+
 ```
-┌──────────────────────────────────────────────────────┐
-│                     Clients                          │
-└─────────────┬────────────────────────┬───────────────┘
-              │                        │
-       ┌──────▼──────┐          ┌──────▼──────┐
-       │  REST API   │          │  gRPC API   │
-       │  :8080      │          │  :9090      │
-       └──────┬──────┘          └──────┬──────┘
-              │                        │
-              └───────────┬────────────┘
-                          │
-                ┌─────────▼─────────┐
-                │   Service Layer   │
-                │  (business logic) │
-                └─────────┬─────────┘
-                          │
-         ┌────────────────┼────────────────┐
-         │                │                │
-  ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐
-  │ Repository  │  │  Publisher  │  │  Consumer   │
-  │ (PostgreSQL)│  │   (Redis)   │  │   (Redis)   │
-  └─────────────┘  └─────────────┘  └─────────────┘
+ ┌──────────────────────────────────────────────────────┐
+ │                     Clients                          │
+ └─────────────┬────────────────────────┬───────────────┘
+               │                        │
+        ┌──────▼──────┐          ┌──────▼──────┐
+        │  REST API   │          │  gRPC API   │
+        │  :8080      │          │  :9090      │
+        └──────┬──────┘          └──────┬──────┘
+               │                        │
+               └───────────┬────────────┘
+                           │
+                 ┌─────────▼─────────┐
+                 │   Service Layer   │
+                 │  (business logic) │
+                 └─────────┬─────────┘
+                           │
+          ┌────────────────┼────────────────────┐
+          │                │                    │
+   ┌──────▼───────┐ ┌──────▼──────────┐  ┌──────▼──────────┐
+   │  Repository  │ │    Publisher    │  │    Consumer     │
+   │ (PostgreSQL) │ │ (Redis Streams) │  │ (Redis Streams) │
+   └──────────────┘ └─────────────────┘  └─────────────────┘
 ```
 
-**Key decisions:**
+### Key Architectural Points:
 
-- **Layered architecture**: transport → service → repository
-- **Shared service layer** for REST and gRPC — no business logic duplication
-- **Event-driven** via Redis Streams with consumer groups
-- **Graceful shutdown** for HTTP, gRPC, and Redis consumer
-- **Structured logging** with request_id for request tracing
+- **Layered Design**: A clear separation between transport (HTTP/gRPC), business logic (service), and data access (repository) layers.
+- **Shared Logic**: Both REST and gRPC APIs utilize the same core `service` layer, preventing code duplication.
+- **Event-Driven**: The service uses Redis Streams for asynchronous event handling. For example, after an order is created, an `order.created` event is published. A background consumer process listens for these events and updates the order status to `confirmed`.
+- **Graceful Shutdown**: The application gracefully shuts down HTTP, gRPC, and the Redis consumer upon receiving a `SIGINT` or `SIGTERM` signal.
+- **Structured Logging**: All logs are structured (JSON) and enriched with a `request_id` for easier tracing and debugging.
+- **Database Migrations**: SQL migrations are automatically applied at application startup.
 
 ---
 
 ## Project Structure
 
 ```
-cmd/api/           # Entry point, dependency initialization
-internal/
-  http/            # REST handlers (Gin)
-  grpc/            # gRPC server
-  service/         # Business logic
-  repo/            # Repository (PostgreSQL)
-  events/          # Publisher/Consumer (Redis Streams)
-  logger/          # Zap logger + middleware
-  model/           # Domain models
-proto/             # .proto files and generated code
-migrations/        # SQL migrations
-build/             # Dockerfile, docker-compose
+.
+├── build/             # Docker configuration
+├── cmd/api/           # Application entry point and initialization
+├── internal/
+│   ├── events/        # Redis Streams publisher and consumer
+│   ├── grpc/          # gRPC server implementation
+│   ├── http/          # REST API handlers (Gin)
+│   ├── logger/        # Zap logger configuration and middleware
+│   ├── model/         # Core domain models
+│   ├── repo/          # PostgreSQL repository implementation
+│   └── service/       # Business logic layer
+├── migrations/        # SQL database migrations
+└── proto/             # Protocol Buffers definitions and generated Go code
 ```
 
 ---
 
-## API
+## API Reference
 
-### REST Endpoints
+### REST API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/orders` | Create order |
-| `GET` | `/orders/:id` | Get order |
-| `GET` | `/orders` | List orders |
-| `PUT` | `/orders/:id` | Update order |
-| `DELETE` | `/orders/:id` | Delete order |
-| `GET` | `/health` | Health check |
+| `POST` | `/orders` | Create a new order |
+| `GET` | `/orders/:id` | Get an order by its ID |
+| `GET` | `/orders` | List all orders |
+| `PUT` | `/orders/:id` | Update an existing order |
+| `DELETE` | `/orders/:id` | Delete an order |
+| `GET` | `/health` | Health check endpoint |
+| `GET` | `/metrics/db`| Database connection pool statistics |
 
-### gRPC Service
+### gRPC API
+
+The following RPCs are defined in `proto/orders.proto`:
 
 ```protobuf
 service OrderService {
@@ -102,200 +110,104 @@ service OrderService {
 }
 ```
 
-**Idempotency**: pass `x-idempotency-key` in gRPC metadata for idempotent order creation.
+---
 
-### Events (Redis Streams)
+## How to Run
 
-| Event | Trigger |
-|-------|---------|
-| `order.created` | After order creation |
-| `order.updated` | After order update |
-| `order.deleted` | After order deletion |
+### Prerequisites
 
-Consumer automatically processes `order.created` and updates order status to `confirmed`.
+- Docker Desktop
+- A `git` client
+- A terminal or command prompt
+
+### Steps
+
+1.  **Clone the repository:**
+    ```bash
+    git clone <repository-url>
+    cd go-orders-service
+    ```
+
+2.  **Start the services:**
+    This command builds the Docker images (if not already built) and starts the `api`, `postgres`, and `redis` containers.
+    ```bash
+    make up
+    ```
+    *The services run in detached mode (`-d`). You can view logs using `make logs`.*
+
+3.  **Verify the application is running:**
+    Check the health endpoint:
+    ```bash
+    curl http://localhost:8080/health
+    # Expected output: {"status":"ok"}
+    ```
+
+4.  **Interact with the API:**
+
+    *   **Create an order (REST):**
+        ```bash
+        curl -X POST http://localhost:8080/orders \
+          -H "Content-Type: application/json" \
+          -d '{"product":"Laptop","quantity":1}'
+        ```
+
+    *   **List orders (REST):**
+        ```bash
+        curl http://localhost:8080/orders
+        ```
+
+    *   **List orders (gRPC):**
+        *(Requires [grpcurl](https://github.com/fullstorydev/grpcurl))*
+        ```bash
+        grpcurl -plaintext localhost:9090 orders.OrderService/ListOrders
+        ```
+
+5.  **Stop the services:**
+    This command stops and removes the containers.
+    ```bash
+    make down
+    ```
 
 ---
 
-## Running Locally
+## Development & Testing
 
-### Requirements
+A `Makefile` provides commands for common development tasks.
 
-- Docker Desktop
+### Running Tests
 
-### Pull Image
-
+Run unit and integration tests with the race detector enabled:
 ```bash
-docker pull ghcr.io/k0de1ne/go-orders-service:main
+make test
 ```
 
-### Start
+### Generating Protobuf Code
 
+To regenerate the Go code from the `.proto` files, run:
 ```bash
-cd build
-docker compose up -d
+make proto
 ```
+*This command runs inside a temporary Docker container to ensure the correct versions of `protoc` and its plugins are used.*
 
-### Verify
+### Benchmarking & Performance
 
-```bash
-# Health check
-curl http://localhost:8080/health
+The project includes a suite of benchmarks and load testing scripts.
 
-# Create order
-curl -X POST http://localhost:8080/orders \
-  -H "Content-Type: application/json" \
-  -d '{"product":"Laptop","quantity":2}'
+-   **Run all benchmarks:** `make bench`
+-   **Run a load test:** `make loadtest-mixed`
+-   **Collect a CPU profile:** `make pprof-cpu`
+-   **Collect a heap profile:** `make pprof-heap`
 
-# List orders
-curl http://localhost:8080/orders
-
-# gRPC (requires grpcurl)
-grpcurl -plaintext localhost:9090 orders.OrderService/ListOrders
-```
-
-### Stop
-
-```bash
-docker compose down
-```
+For a full list of commands, run `make help`.
 
 ---
 
 ## CI/CD
 
-Pipeline runs on **self-hosted runner** on push/PR to `main`.
+The CI pipeline is defined in `.github/workflows/ci.yml` and runs on a self-hosted runner. It includes the following stages:
 
-### Stages
-
-| Stage | Description |
-|-------|-------------|
-| **Lint** | golangci-lint + govulncheck |
-| **Test** | `go test -race` with coverage |
-| **Docker Build** | Multi-stage build, push to GHCR |
-| **Security Scan** | Trivy (CRITICAL, HIGH) |
-| **Integration Test** | docker-compose + health check |
-
-### Docker Image
-
-```
-ghcr.io/k0de1ne/go-orders-service:latest
-ghcr.io/k0de1ne/go-orders-service:sha-<commit>
-```
-
----
-
-## Production Patterns
-
-**Implemented:**
-
-- Graceful shutdown (HTTP, gRPC, Redis consumer)
-- Structured logging (JSON) with request_id
-- Health check endpoint
-- Multi-stage Docker build (scratch image)
-- Dependency health checks in docker-compose
-- Consumer groups for Redis Streams
-- Separation of transport/service/repository layers
-- Unit tests with mock repository
-- Performance profiling via pprof (CPU, heap, goroutines)
-- Database connection pool configuration
-- Database metrics endpoint
-- Comprehensive benchmarking suite
-- Load testing tool with configurable scenarios
-
-**Intentional simplifications:**
-
-- Migrations run at application startup
-- Consumer group with single consumer
-- No retry/DLQ for events
-- Idempotency key is logged but not validated in DB
-
-**Potential improvements:**
-
-- Distributed tracing (OpenTelemetry)
-- Metrics (Prometheus)
-- Idempotency via key storage in Redis/PostgreSQL
-- Outbox pattern for guaranteed event delivery
-- Kubernetes manifests
-
----
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | 8080 | HTTP server port |
-| `GRPC_PORT` | 9090 | gRPC server port |
-| `PPROF_PORT` | 6060 | pprof profiling port |
-| `DATABASE_URL` | — | PostgreSQL connection string |
-| `REDIS_URL` | — | Redis connection string |
-
----
-
-## Development
-
-### Basic Commands
-
-```bash
-# Run tests
-make test
-
-# Generate proto
-make proto
-
-# View logs
-make logs
-
-# Restart service
-make restart
-
-# Show all available commands
-make help
-```
-
-### Performance Testing
-
-**Benchmarks:**
-```bash
-make bench              # Run all benchmarks
-make bench-service      # Service layer only
-make bench-save         # Save baseline
-make bench-compare      # Compare results
-```
-
-**Load Testing:**
-```bash
-make loadtest-create    # Test create operation
-make loadtest-mixed     # Test mixed operations
-make loadtest-duration  # 1-minute stress test
-```
-
-**Profiling:**
-```bash
-make pprof-cpu          # Collect CPU profile
-make pprof-heap         # Collect heap profile
-make pprof-web          # Open interactive web UI
-```
-
-**Monitoring:**
-```bash
-make health             # Health check
-make db-metrics         # Database pool stats
-```
-
-**Custom load test:**
-```bash
-go run scripts/loadtest.go -requests 5000 -concurrency 50 -operation mixed
-go run scripts/loadtest.go -duration 5m -concurrency 20 -operation create
-```
-
-Operations: `create`, `get`, `list`, `update`, `delete`, `mixed`
-
-### Profiling Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `:6060/debug/pprof/` | pprof index |
-| `:6060/debug/pprof/profile?seconds=30` | CPU profile |
-| `:6060/debug/pprof/heap` | Heap profile |
-| `:6060/debug/pprof/goroutine` | Goroutine dump |
-| `:8080/metrics/db` | Database pool metrics |
+1.  **Lint**: Runs `golangci-lint` and `govulncheck` to check for code style issues and vulnerabilities.
+2.  **Test**: Executes the test suite using `go test -race`.
+3.  **Docker Build**: Builds the application's Docker image and pushes it to GitHub Container Registry (GHCR). A `sha-<commit>` tag and a branch tag are created. The `latest` tag is applied only to the `main` branch.
+4.  **Security Scan**: Uses `Trivy` to scan the built Docker image for `CRITICAL` and `HIGH` severity vulnerabilities.
+5.  **Integration Test**: Starts the application stack using `docker-compose` and verifies the API health endpoint.
